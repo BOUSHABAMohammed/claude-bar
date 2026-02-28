@@ -5,8 +5,10 @@ Displays real usage data from claude.ai, refreshing every 5 minutes.
 Run: python claude_bar.py
 """
 
+import argparse
 import datetime
 import pathlib
+import sys
 from datetime import timezone
 
 import rumps
@@ -14,12 +16,13 @@ import rookiepy
 from curl_cffi import requests
 from color_utils import (
     make_plain, make_section_header, make_progress_row,
-    set_menu_title, pct_color_key,
+    set_menu_title,
 )
 
 REFRESH_INTERVAL = 300  # seconds
 COOKIE_NAMES = ("sessionKey", "__Secure-next-auth.session-token")
-
+BROWSERS = ("chrome", "safari", "firefox", "brave", "edge")
+PROGRESS_WIDTH = 20
 ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
 
 # Set to False to hide the percentage summary next to the menu bar icon.
@@ -38,20 +41,24 @@ def get_session_cookie(browser: str):
         for c in loader(["claude.ai"]):
             if c["name"] in COOKIE_NAMES:
                 return c["name"], c["value"]
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[claude_bar] {browser}: {exc}")
     return None, None
 
 
-def build_session() -> requests.Session:
+def build_session(browser: str | None = None) -> requests.Session:
     """Build a requests.Session with the claude.ai session cookie attached."""
-    for browser in ("chrome", "safari", "firefox", "brave", "edge"):
-        name, val = get_session_cookie(browser)
+    browsers_to_try = (browser,) if browser else BROWSERS
+    for b in browsers_to_try:
+        name, val = get_session_cookie(b)
         if val:
-            print(f"[claude_bar] Using cookie '{name}' from {browser}")
+            print(f"[claude_bar] Using cookie '{name}' from {b}")
             s = requests.Session(impersonate="chrome120")
             s.cookies.set(name, val, domain="claude.ai")
             return s
+    if browser:
+        print(f"[claude_bar] ERROR: No session cookie found in '{browser}'. Exiting.")
+        sys.exit(1)
     raise RuntimeError(
         "No claude.ai session cookie found. "
         "Log in to Claude in Chrome or Safari first."
@@ -69,7 +76,10 @@ def get_org_id(session: requests.Session) -> str:
     if not orgs:
         raise RuntimeError("No organizations returned from API")
     org = orgs[0]
-    return org.get("uuid") or org["id"]
+    org_id = org.get("uuid") or org.get("id")
+    if not org_id:
+        raise RuntimeError("Organization has no 'uuid' or 'id' field")
+    return org_id
 
 
 def fetch_usage(session: requests.Session, org_id: str) -> dict:
@@ -90,12 +100,9 @@ def fmt_reset(iso) -> str:
     if not isinstance(iso, str):
         return "unknown"
     dt = datetime.datetime.fromisoformat(iso)
-    now = datetime.datetime.now(timezone.utc)
-    remaining = dt - now
-    total_secs = max(0, int(remaining.total_seconds()))
+    total_secs = max(0, int((dt - datetime.datetime.now(timezone.utc)).total_seconds()))
     h, rem = divmod(total_secs, 3600)
-    m = rem // 60
-    return f"{h}h {m:02d}m"
+    return f"{h}h {rem // 60:02d}m"
 
 
 def fmt_date(iso) -> str:
@@ -105,42 +112,35 @@ def fmt_date(iso) -> str:
     return datetime.datetime.fromisoformat(iso).strftime("%a %b %d")
 
 
+def _progress_bar(pct: float, width: int = PROGRESS_WIDTH) -> tuple[str, str]:
+    filled = round(pct / 100 * width)
+    return "▓" * filled, "░" * (width - filled)
+
+
 # ---------------------------------------------------------------------------
 # Menu bar app
 # ---------------------------------------------------------------------------
 
 class ClaudeBar(rumps.App):
-    def __init__(self):
+    def __init__(self, browser: str | None = None):
         super().__init__("Claude", "⚡ …")
+        self._browser = browser
 
-        # Section headers (act as disabled labels)
         self.five_h_hdr   = rumps.MenuItem("◆ 5-Hour Window")
         self.five_h_row   = rumps.MenuItem("  …")
-
         self.seven_d_hdr  = rumps.MenuItem("◆ 7-Day Window")
         self.seven_d_row  = rumps.MenuItem("  …")
-
         self.credits_hdr  = rumps.MenuItem("◆ Extra Credits")
         self.credits_row  = rumps.MenuItem("  …")
-
         self.refresh_btn    = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
         self.summary_toggle = rumps.MenuItem("", callback=self.on_toggle_summary)
         self.last_item      = rumps.MenuItem("  Last updated: —")
 
         self.menu = [
-            self.five_h_hdr,
-            self.five_h_row,
-            None,
-            self.seven_d_hdr,
-            self.seven_d_row,
-            None,
-            self.credits_hdr,
-            self.credits_row,
-            None,
-            self.summary_toggle,
-            self.refresh_btn,
-            self.last_item,
-            None,
+            self.five_h_hdr, self.five_h_row, None,
+            self.seven_d_hdr, self.seven_d_row, None,
+            self.credits_hdr, self.credits_row, None,
+            self.summary_toggle, self.refresh_btn, self.last_item, None,
         ]
 
         self._session: requests.Session | None = None
@@ -150,18 +150,13 @@ class ClaudeBar(rumps.App):
         self._last_fh_pct: float | None = None
         self._last_sd_pct: float | None = None
         self._credits_shown: bool = True
-        self._update_toggle_label()
 
-        # Apply colored headers immediately (static, no data needed)
+        self._update_toggle_label()
         set_menu_title(self.five_h_hdr,  make_section_header("5-Hour Window"))
         set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
         set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
 
-        self._timer = rumps.Timer(self._refresh, REFRESH_INTERVAL)
-        self._timer.start()
         self._refresh(None)
-
-        # Schedule icon download after run() starts
         rumps.Timer(self._setup_icon, 0.5).start()
 
     # ------------------------------------------------------------------
@@ -187,7 +182,6 @@ class ClaudeBar(rumps.App):
             self.title = f"{self._last_fh_pct:.0f}% · {self._last_sd_pct:.0f}%"
         elif self._icon_loaded:
             self.title = None  # icon-only
-        # else: leave loading text untouched
 
     def _update_toggle_label(self):
         mark = "✓" if self._show_summary else "  "
@@ -209,63 +203,58 @@ class ClaudeBar(rumps.App):
     def _auto_refresh(self, _):
         self._refresh(None)
 
+    # ------------------------------------------------------------------
+    # Session management
+    # ------------------------------------------------------------------
+
+    def _ensure_session(self):
+        if self._session is None:
+            self._session = build_session(self._browser)
+        if self._org_id is None:
+            self._org_id = get_org_id(self._session)
+
+    def _handle_error(self, exc: Exception):
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            code = resp.status_code
+            if code == 401:
+                self._session = None
+                self._org_id = None
+                self.title = "⚡ 🔑"
+                set_menu_title(self.last_item,
+                    make_plain("  Error: session expired — refresh to retry", "error"))
+            else:
+                self.title = f"⚡ err {code}"
+                set_menu_title(self.last_item,
+                    make_plain(f"  HTTP error {code}", "error"))
+        else:
+            self.title = "⚡ ?"
+            set_menu_title(self.last_item,
+                make_plain(f"  Error: {exc}", "error"))
+            print(f"[claude_bar] refresh error: {exc}")
+
     def _refresh(self, _):
         try:
-            if self._session is None:
-                self._session = build_session()
-            if self._org_id is None:
-                self._org_id = get_org_id(self._session)
-
+            self._ensure_session()
             data = fetch_usage(self._session, self._org_id)
             self._update_menu(data)
-
-        except Exception as e:
-            resp = getattr(e, "response", None)
-            if resp is not None:
-                code = resp.status_code
-                if code == 401:
-                    self._session = None
-                    self._org_id = None
-                    self.title = "⚡ 🔑"
-                    set_menu_title(self.last_item,
-                        make_plain("  Error: session expired — refresh to retry", "error"))
-                else:
-                    self.title = f"⚡ err {code}"
-                    set_menu_title(self.last_item,
-                        make_plain(f"  HTTP error {code}", "error"))
-            else:
-                self.title = "⚡ ?"
-                set_menu_title(self.last_item,
-                    make_plain(f"  Error: {e}", "error"))
-                print(f"[claude_bar] refresh error: {e}")
+        except Exception as exc:
+            self._handle_error(exc)
 
     # ------------------------------------------------------------------
     # Menu update
     # ------------------------------------------------------------------
 
-    def _update_menu(self, data: dict):
-        fh = data["five_hour"]
-        sd = data["seven_day"]
-        ex = data.get("extra_usage") or {}
+    def _set_credits_visible(self, visible: bool):
+        self.credits_hdr._menuitem.setHidden_(not visible)
+        self.credits_row._menuitem.setHidden_(not visible)
+        self._credits_shown = visible
 
-        fh_pct = fh["utilization"]
-        sd_pct = sd["utilization"]
+    def _render_window(self, row_item, pct: float, suffix: str):
+        filled, empty = _progress_bar(pct)
+        set_menu_title(row_item, make_progress_row(pct, filled, empty, suffix))
 
-        w = 20
-        fh_f = round(fh_pct / 100 * w)
-        sd_f = round(sd_pct / 100 * w)
-
-        # 5-hour block
-        set_menu_title(self.five_h_row, make_progress_row(
-            fh_pct, "▓" * fh_f, "░" * (w - fh_f),
-            f"  resets in {fmt_reset(fh['resets_at'])}"))
-
-        # 7-day block
-        set_menu_title(self.seven_d_row, make_progress_row(
-            sd_pct, "▓" * sd_f, "░" * (w - sd_f),
-            f"  resets {fmt_date(sd['resets_at'])}"))
-
-        # Extra credits — only shown when is_enabled
+    def _render_credits(self, ex: dict):
         if ex.get("is_enabled"):
             used  = ex.get("used_credits", 0)
             limit = ex.get("monthly_limit", 0)
@@ -273,18 +262,22 @@ class ClaudeBar(rumps.App):
             set_menu_title(self.credits_row,
                 make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", "credits"))
             if not self._credits_shown:
-                self.credits_hdr._menuitem.setHidden_(False)
-                self.credits_row._menuitem.setHidden_(False)
-                self._credits_shown = True
-        else:
-            if self._credits_shown:
-                self.credits_hdr._menuitem.setHidden_(True)
-                self.credits_row._menuitem.setHidden_(True)
-                self._credits_shown = False
+                self._set_credits_visible(True)
+        elif self._credits_shown:
+            self._set_credits_visible(False)
 
-        # Title bar
-        self._last_fh_pct = fh_pct
-        self._last_sd_pct = sd_pct
+    def _update_menu(self, data: dict):
+        fh = data["five_hour"]
+        sd = data["seven_day"]
+
+        self._render_window(self.five_h_row, fh["utilization"],
+                            f"  resets in {fmt_reset(fh['resets_at'])}")
+        self._render_window(self.seven_d_row, sd["utilization"],
+                            f"  resets {fmt_date(sd['resets_at'])}")
+        self._render_credits(data.get("extra_usage") or {})
+
+        self._last_fh_pct = fh["utilization"]
+        self._last_sd_pct = sd["utilization"]
         self._apply_title()
 
         set_menu_title(self.last_item,
@@ -296,4 +289,12 @@ class ClaudeBar(rumps.App):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    ClaudeBar().run()
+    parser = argparse.ArgumentParser(description="Claude usage menu bar app")
+    parser.add_argument(
+        "--browser",
+        choices=list(BROWSERS),
+        metavar="BROWSER",
+        help=f"Browser to read session cookie from. Choices: {', '.join(BROWSERS)}",
+    )
+    args = parser.parse_args()
+    ClaudeBar(browser=args.browser).run()
