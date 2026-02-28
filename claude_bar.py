@@ -15,14 +15,15 @@ import rumps
 import rookiepy
 from curl_cffi import requests
 from color_utils import (
+    ColorKey,
     make_plain, make_section_header, make_progress_row,
     set_menu_title,
 )
 
 REFRESH_INTERVAL = 300  # seconds
+ICON_SETUP_DELAY_SECS = 0.5  # give the run loop time to start before loading the icon
 COOKIE_NAMES = ("sessionKey", "__Secure-next-auth.session-token")
 BROWSERS = ("chrome", "safari", "firefox", "brave", "edge")  # edge support on macOS is limited in rookiepy
-PROGRESS_WIDTH = 20
 ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
 
 # Set to False to hide the percentage summary next to the menu bar icon.
@@ -94,11 +95,18 @@ def fetch_usage(session: requests.Session, org_id: str) -> dict:
 # Display helpers
 # ---------------------------------------------------------------------------
 
+def _parse_iso(iso) -> datetime.datetime | None:
+    """Parse an ISO 8601 string to a timezone-aware datetime, or None if invalid."""
+    if not isinstance(iso, str):
+        return None
+    return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
 def fmt_reset(iso) -> str:
     """Format time remaining until reset as '2h 44m'."""
-    if not isinstance(iso, str):
+    dt = _parse_iso(iso)
+    if dt is None:
         return "unknown"
-    dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     total_secs = max(0, int((dt - datetime.datetime.now(timezone.utc)).total_seconds()))
@@ -108,14 +116,10 @@ def fmt_reset(iso) -> str:
 
 def fmt_date(iso) -> str:
     """Format reset date as 'Fri Mar 06'."""
-    if not isinstance(iso, str):
+    dt = _parse_iso(iso)
+    if dt is None:
         return "unknown"
-    return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%a %b %d")
-
-
-def _progress_bar(pct: float, width: int = PROGRESS_WIDTH) -> tuple[str, str]:
-    filled = min(round(pct / 100 * width), width)
-    return "▓" * filled, "░" * (width - filled)
+    return dt.strftime("%a %b %d")
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +130,30 @@ class ClaudeBar(rumps.App):
     def __init__(self, browser: str | None = None):
         super().__init__("Claude", "⚡ …")
         self._browser = browser
+        self._build_menu_items()
+        self._init_state()
+        self._update_toggle_label()
+        set_menu_title(self.five_h_hdr, make_section_header("5-Hour Window"))
+        set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
+        set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
+        self._set_credits_visible(False)  # hidden until first refresh confirms is_enabled
+        self._refresh(None)
+        rumps.Timer(self._setup_icon, ICON_SETUP_DELAY_SECS).start()
 
-        self.five_h_hdr   = rumps.MenuItem("◆ 5-Hour Window")
-        self.five_h_row   = rumps.MenuItem("  …")
-        self.seven_d_hdr  = rumps.MenuItem("◆ 7-Day Window")
-        self.seven_d_row  = rumps.MenuItem("  …")
-        self.credits_hdr  = rumps.MenuItem("◆ Extra Credits")
-        self.credits_row  = rumps.MenuItem("  …")
-        self.refresh_btn    = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
+    # ------------------------------------------------------------------
+    # Initialization helpers
+    # ------------------------------------------------------------------
+
+    def _build_menu_items(self):
+        self.five_h_hdr = rumps.MenuItem("◆ 5-Hour Window")
+        self.five_h_row = rumps.MenuItem("  …")
+        self.seven_d_hdr = rumps.MenuItem("◆ 7-Day Window")
+        self.seven_d_row = rumps.MenuItem("  …")
+        self.credits_hdr = rumps.MenuItem("◆ Extra Credits")
+        self.credits_row = rumps.MenuItem("  …")
+        self.refresh_btn = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
         self.summary_toggle = rumps.MenuItem("", callback=self.on_toggle_summary)
-        self.last_item      = rumps.MenuItem("  Last updated: —")
+        self.last_item = rumps.MenuItem("  Last updated: —")
 
         self.menu = [
             self.five_h_hdr, self.five_h_row, None,
@@ -144,6 +162,7 @@ class ClaudeBar(rumps.App):
             self.summary_toggle, self.refresh_btn, self.last_item, None,
         ]
 
+    def _init_state(self):
         self._session: requests.Session | None = None
         self._org_id: str | None = None
         self._refreshing: bool = False
@@ -154,15 +173,6 @@ class ClaudeBar(rumps.App):
         self._last_sd_pct: float | None = None
         self._credits_shown: bool = False
 
-        self._update_toggle_label()
-        set_menu_title(self.five_h_hdr,  make_section_header("5-Hour Window"))
-        set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
-        set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
-        self._set_credits_visible(False)  # hidden until first refresh confirms is_enabled
-
-        self._refresh(None)
-        rumps.Timer(self._setup_icon, 0.5).start()
-
     # ------------------------------------------------------------------
     # Icon setup
     # ------------------------------------------------------------------
@@ -171,8 +181,8 @@ class ClaudeBar(rumps.App):
         if not ICON_PATH.exists():
             print(f"[claude_bar] icon not found: {ICON_PATH}")
             return
-        self.icon         = str(ICON_PATH)
-        self.template     = True
+        self.icon = str(ICON_PATH)
+        self.template = True
         self._icon_loaded = True
         self._apply_title()
 
@@ -227,15 +237,15 @@ class ClaudeBar(rumps.App):
                 self._org_id = None
                 self.title = "⚡ 🔑"
                 set_menu_title(self.last_item,
-                    make_plain("  Error: session expired — refresh to retry", "error"))
+                    make_plain("  Error: session expired — refresh to retry", ColorKey.ERROR))
             else:
                 self.title = f"⚡ err {code}"
                 set_menu_title(self.last_item,
-                    make_plain(f"  HTTP error {code}", "error"))
+                    make_plain(f"  HTTP error {code}", ColorKey.ERROR))
         else:
             self.title = "⚡ ?"
             set_menu_title(self.last_item,
-                make_plain(f"  Error: {type(exc).__name__}", "error"))
+                make_plain(f"  Error: {type(exc).__name__}", ColorKey.ERROR))
             print(f"[claude_bar] refresh error: {type(exc).__name__}: {str(exc)[:200]}")
 
     def _refresh(self, _):
@@ -266,35 +276,34 @@ class ClaudeBar(rumps.App):
         self._credits_shown = visible
 
     def _render_window(self, row_item, pct: float, suffix: str):
-        filled, empty = _progress_bar(pct)
-        set_menu_title(row_item, make_progress_row(pct, filled, empty, suffix))
+        set_menu_title(row_item, make_progress_row(pct, suffix))
 
-    def _render_credits(self, ex: dict):
-        if ex.get("is_enabled"):
-            used  = ex.get("used_credits", 0)
-            limit = ex.get("monthly_limit", 0)
-            util  = ex.get("utilization", 0)
+    def _render_credits(self, extra_usage: dict):
+        if extra_usage.get("is_enabled"):
+            used = extra_usage.get("used_credits", 0)
+            limit = extra_usage.get("monthly_limit", 0)
+            util = extra_usage.get("utilization", 0)
             set_menu_title(self.credits_row,
-                make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", "credits"))
+                make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", ColorKey.CREDITS))
             if not self._credits_shown:
                 self._set_credits_visible(True)
         elif self._credits_shown:
             self._set_credits_visible(False)
 
     def _update_menu(self, data: dict):
-        fh = data.get("five_hour")
-        sd = data.get("seven_day")
+        five_hour = data.get("five_hour")
+        seven_day = data.get("seven_day")
 
-        if fh is None or sd is None:
+        if five_hour is None or seven_day is None:
             print(f"[claude_bar] unexpected API response keys: {list(data.keys())}")
             set_menu_title(self.last_item,
-                make_plain("  Error: unexpected API response shape", "error"))
+                make_plain("  Error: unexpected API response shape", ColorKey.ERROR))
             return
 
-        fh_util   = fh.get("utilization", 0.0)
-        fh_resets = fh.get("resets_at")
-        sd_util   = sd.get("utilization", 0.0)
-        sd_resets = sd.get("resets_at")
+        fh_util = five_hour.get("utilization", 0.0)
+        fh_resets = five_hour.get("resets_at")
+        sd_util = seven_day.get("utilization", 0.0)
+        sd_resets = seven_day.get("resets_at")
 
         self._render_window(self.five_h_row, fh_util,
                             f"  resets in {fmt_reset(fh_resets)}")
@@ -307,14 +316,14 @@ class ClaudeBar(rumps.App):
         self._apply_title()
 
         set_menu_title(self.last_item,
-            make_plain(f"  Last updated {datetime.datetime.now():%H:%M:%S}", "last_updated"))
+            make_plain(f"  Last updated {datetime.datetime.now():%H:%M:%S}", ColorKey.LAST_UPDATED))
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Claude usage menu bar app")
     parser.add_argument(
         "--browser",
@@ -324,3 +333,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     ClaudeBar(browser=args.browser).run()
+
+
+if __name__ == "__main__":
+    main()
