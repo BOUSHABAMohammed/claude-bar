@@ -42,7 +42,7 @@ def get_session_cookie(browser: str):
             if c["name"] in COOKIE_NAMES:
                 return c["name"], c["value"]
     except Exception as exc:
-        print(f"[claude_bar] {browser}: {exc}")
+        print(f"[claude_bar] {browser}: {type(exc).__name__}")
     return None, None
 
 
@@ -147,6 +147,7 @@ class ClaudeBar(rumps.App):
         self._session: requests.Session | None = None
         self._org_id: str | None = None
         self._refreshing: bool = False
+        self._refresh_lock = threading.Lock()
         self._show_summary: bool = SHOW_TITLE_SUMMARY
         self._icon_loaded: bool = False
         self._last_fh_pct: float | None = None
@@ -234,13 +235,14 @@ class ClaudeBar(rumps.App):
         else:
             self.title = "⚡ ?"
             set_menu_title(self.last_item,
-                make_plain(f"  Error: {exc}", "error"))
-            print(f"[claude_bar] refresh error: {exc}")
+                make_plain(f"  Error: {type(exc).__name__}", "error"))
+            print(f"[claude_bar] refresh error: {type(exc).__name__}: {str(exc)[:200]}")
 
     def _refresh(self, _):
-        if self._refreshing:
-            return
-        self._refreshing = True
+        with self._refresh_lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
         threading.Thread(target=self._refresh_bg, daemon=True).start()
 
     def _refresh_bg(self):
@@ -251,7 +253,8 @@ class ClaudeBar(rumps.App):
         except Exception as exc:
             self._handle_error(exc)
         finally:
-            self._refreshing = False
+            with self._refresh_lock:
+                self._refreshing = False
 
     # ------------------------------------------------------------------
     # Menu update
@@ -279,17 +282,28 @@ class ClaudeBar(rumps.App):
             self._set_credits_visible(False)
 
     def _update_menu(self, data: dict):
-        fh = data["five_hour"]
-        sd = data["seven_day"]
+        fh = data.get("five_hour")
+        sd = data.get("seven_day")
 
-        self._render_window(self.five_h_row, fh["utilization"],
-                            f"  resets in {fmt_reset(fh['resets_at'])}")
-        self._render_window(self.seven_d_row, sd["utilization"],
-                            f"  resets {fmt_date(sd['resets_at'])}")
+        if fh is None or sd is None:
+            print(f"[claude_bar] unexpected API response keys: {list(data.keys())}")
+            set_menu_title(self.last_item,
+                make_plain("  Error: unexpected API response shape", "error"))
+            return
+
+        fh_util   = fh.get("utilization", 0.0)
+        fh_resets = fh.get("resets_at")
+        sd_util   = sd.get("utilization", 0.0)
+        sd_resets = sd.get("resets_at")
+
+        self._render_window(self.five_h_row, fh_util,
+                            f"  resets in {fmt_reset(fh_resets)}")
+        self._render_window(self.seven_d_row, sd_util,
+                            f"  resets {fmt_date(sd_resets)}")
         self._render_credits(data.get("extra_usage") or {})
 
-        self._last_fh_pct = fh["utilization"]
-        self._last_sd_pct = sd["utilization"]
+        self._last_fh_pct = fh_util
+        self._last_sd_pct = sd_util
         self._apply_title()
 
         set_menu_title(self.last_item,
