@@ -6,14 +6,25 @@ Run: python claude_bar.py
 """
 
 import datetime
+import pathlib
 from datetime import timezone
 
 import rumps
 import rookiepy
 from curl_cffi import requests
+from color_utils import (
+    make_plain, make_section_header, make_progress_row,
+    set_menu_title, pct_color_key,
+)
 
 REFRESH_INTERVAL = 300  # seconds
 COOKIE_NAMES = ("sessionKey", "__Secure-next-auth.session-token")
+
+ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
+
+# Set to False to hide the percentage summary next to the menu bar icon.
+# Can also be toggled at runtime via the menu.
+SHOW_TITLE_SUMMARY = True
 
 
 # ---------------------------------------------------------------------------
@@ -90,20 +101,6 @@ def fmt_date(iso: str) -> str:
     return datetime.datetime.fromisoformat(iso).strftime("%a %b %d")
 
 
-def bar(pct: float, width: int = 20) -> str:
-    """Return a Unicode progress bar like ▓▓▓▓░░░░░░░░░░░░░░░░"""
-    filled = max(0, min(width, round(pct / 100 * width)))
-    return "▓" * filled + "░" * (width - filled)
-
-
-def warn_icon(pct: float) -> str:
-    if pct >= 80:
-        return "🔴"
-    if pct >= 60:
-        return "🟡"
-    return "⚡"
-
-
 # ---------------------------------------------------------------------------
 # Menu bar app
 # ---------------------------------------------------------------------------
@@ -122,8 +119,9 @@ class ClaudeBar(rumps.App):
         self.credits_hdr  = rumps.MenuItem("◆ Extra Credits")
         self.credits_row  = rumps.MenuItem("  …")
 
-        self.refresh_btn  = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
-        self.last_item    = rumps.MenuItem("  Last updated: —")
+        self.refresh_btn    = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
+        self.summary_toggle = rumps.MenuItem("", callback=self.on_toggle_summary)
+        self.last_item      = rumps.MenuItem("  Last updated: —")
 
         self.menu = [
             self.five_h_hdr,
@@ -135,6 +133,7 @@ class ClaudeBar(rumps.App):
             self.credits_hdr,
             self.credits_row,
             None,
+            self.summary_toggle,
             self.refresh_btn,
             self.last_item,
             None,
@@ -142,10 +141,52 @@ class ClaudeBar(rumps.App):
 
         self._session: requests.Session | None = None
         self._org_id: str | None = None
+        self._show_summary: bool = SHOW_TITLE_SUMMARY
+        self._icon_loaded: bool = False
+        self._last_fh_pct: float | None = None
+        self._last_sd_pct: float | None = None
+        self._update_toggle_label()
+
+        # Apply colored headers immediately (static, no data needed)
+        set_menu_title(self.five_h_hdr,  make_section_header("5-Hour Window"))
+        set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
+        set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
 
         self._timer = rumps.Timer(self._refresh, REFRESH_INTERVAL)
         self._timer.start()
         self._refresh(None)
+
+        # Schedule icon download after run() starts
+        rumps.Timer(self._setup_icon, 0.5).start()
+
+    # ------------------------------------------------------------------
+    # Icon setup
+    # ------------------------------------------------------------------
+
+    def _setup_icon(self, _):
+        if not ICON_PATH.exists():
+            print(f"[claude_bar] icon not found: {ICON_PATH}")
+            return
+        self.icon         = str(ICON_PATH)
+        self.template     = True
+        self._icon_loaded = True
+        self._apply_title()
+
+    # ------------------------------------------------------------------
+    # Title helpers
+    # ------------------------------------------------------------------
+
+    def _apply_title(self):
+        """Set self.title based on current show_summary flag and last known data."""
+        if self._show_summary and self._last_fh_pct is not None:
+            self.title = f"{self._last_fh_pct:.0f}% · {self._last_sd_pct:.0f}%"
+        elif self._icon_loaded:
+            self.title = None  # icon-only
+        # else: leave loading text untouched
+
+    def _update_toggle_label(self):
+        mark = "✓" if self._show_summary else "  "
+        self.summary_toggle.title = f"  {mark} Show % in status bar"
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -153,6 +194,11 @@ class ClaudeBar(rumps.App):
 
     def on_refresh(self, _):
         self._refresh(None)
+
+    def on_toggle_summary(self, _):
+        self._show_summary = not self._show_summary
+        self._update_toggle_label()
+        self._apply_title()
 
     @rumps.timer(REFRESH_INTERVAL)
     def _auto_refresh(self, _):
@@ -174,14 +220,17 @@ class ClaudeBar(rumps.App):
                 self._session = None
                 self._org_id = None
                 self.title = "⚡ 🔑"
-                self.last_item.title = "  Error: session expired — refresh to retry"
+                set_menu_title(self.last_item,
+                    make_plain("  Error: session expired — refresh to retry", "error"))
             else:
                 self.title = f"⚡ err {code}"
-                self.last_item.title = f"  HTTP error {code}"
+                set_menu_title(self.last_item,
+                    make_plain(f"  HTTP error {code}", "error"))
 
         except Exception as e:
             self.title = "⚡ ?"
-            self.last_item.title = f"  Error: {e}"
+            set_menu_title(self.last_item,
+                make_plain(f"  Error: {e}", "error"))
             print(f"[claude_bar] refresh error: {e}")
 
     # ------------------------------------------------------------------
@@ -196,33 +245,37 @@ class ClaudeBar(rumps.App):
         fh_pct = fh["utilization"]
         sd_pct = sd["utilization"]
 
+        w = 20
+        fh_f = round(fh_pct / 100 * w)
+        sd_f = round(sd_pct / 100 * w)
+
         # 5-hour block
-        self.five_h_row.title = (
-            f"  {fh_pct:.0f}%  {bar(fh_pct)}  resets in {fmt_reset(fh['resets_at'])}"
-        )
+        set_menu_title(self.five_h_row, make_progress_row(
+            fh_pct, "▓" * fh_f, "░" * (w - fh_f),
+            f"  resets in {fmt_reset(fh['resets_at'])}"))
 
         # 7-day block
-        self.seven_d_row.title = (
-            f"  {sd_pct:.0f}%  {bar(sd_pct)}  resets {fmt_date(sd['resets_at'])}"
-        )
+        set_menu_title(self.seven_d_row, make_progress_row(
+            sd_pct, "▓" * sd_f, "░" * (w - sd_f),
+            f"  resets {fmt_date(sd['resets_at'])}"))
 
         # Extra credits
         if ex.get("is_enabled"):
             used  = ex.get("used_credits", 0)
             limit = ex.get("monthly_limit", 0)
             util  = ex.get("utilization", 0)
-            self.credits_row.title = (
-                f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)"
-            )
+            set_menu_title(self.credits_row,
+                make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", "credits"))
         else:
-            self.credits_row.title = "  not enabled"
+            set_menu_title(self.credits_row, make_plain("  not enabled", "last_updated"))
 
         # Title bar
-        max_pct = max(fh_pct, sd_pct)
-        self.title = f"{warn_icon(max_pct)} 5h:{fh_pct:.0f}%  7d:{sd_pct:.0f}%"
-        self.last_item.title = (
-            f"  Last updated {datetime.datetime.now():%H:%M:%S}"
-        )
+        self._last_fh_pct = fh_pct
+        self._last_sd_pct = sd_pct
+        self._apply_title()
+
+        set_menu_title(self.last_item,
+            make_plain(f"  Last updated {datetime.datetime.now():%H:%M:%S}", "last_updated"))
 
 
 # ---------------------------------------------------------------------------
