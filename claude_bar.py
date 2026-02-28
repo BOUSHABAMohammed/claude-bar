@@ -85,8 +85,10 @@ def fetch_usage(session: requests.Session, org_id: str) -> dict:
 # Display helpers
 # ---------------------------------------------------------------------------
 
-def fmt_reset(iso: str) -> str:
+def fmt_reset(iso) -> str:
     """Format time remaining until reset as '2h 44m'."""
+    if not isinstance(iso, str):
+        return "unknown"
     dt = datetime.datetime.fromisoformat(iso)
     now = datetime.datetime.now(timezone.utc)
     remaining = dt - now
@@ -96,8 +98,10 @@ def fmt_reset(iso: str) -> str:
     return f"{h}h {m:02d}m"
 
 
-def fmt_date(iso: str) -> str:
+def fmt_date(iso) -> str:
     """Format reset date as 'Fri Mar 06'."""
+    if not isinstance(iso, str):
+        return "unknown"
     return datetime.datetime.fromisoformat(iso).strftime("%a %b %d")
 
 
@@ -145,6 +149,7 @@ class ClaudeBar(rumps.App):
         self._icon_loaded: bool = False
         self._last_fh_pct: float | None = None
         self._last_sd_pct: float | None = None
+        self._credits_shown: bool = True
         self._update_toggle_label()
 
         # Apply colored headers immediately (static, no data needed)
@@ -214,24 +219,25 @@ class ClaudeBar(rumps.App):
             data = fetch_usage(self._session, self._org_id)
             self._update_menu(data)
 
-        except requests.HTTPError as e:
-            code = e.response.status_code if e.response is not None else "?"
-            if code == 401:
-                self._session = None
-                self._org_id = None
-                self.title = "⚡ 🔑"
-                set_menu_title(self.last_item,
-                    make_plain("  Error: session expired — refresh to retry", "error"))
-            else:
-                self.title = f"⚡ err {code}"
-                set_menu_title(self.last_item,
-                    make_plain(f"  HTTP error {code}", "error"))
-
         except Exception as e:
-            self.title = "⚡ ?"
-            set_menu_title(self.last_item,
-                make_plain(f"  Error: {e}", "error"))
-            print(f"[claude_bar] refresh error: {e}")
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                code = resp.status_code
+                if code == 401:
+                    self._session = None
+                    self._org_id = None
+                    self.title = "⚡ 🔑"
+                    set_menu_title(self.last_item,
+                        make_plain("  Error: session expired — refresh to retry", "error"))
+                else:
+                    self.title = f"⚡ err {code}"
+                    set_menu_title(self.last_item,
+                        make_plain(f"  HTTP error {code}", "error"))
+            else:
+                self.title = "⚡ ?"
+                set_menu_title(self.last_item,
+                    make_plain(f"  Error: {e}", "error"))
+                print(f"[claude_bar] refresh error: {e}")
 
     # ------------------------------------------------------------------
     # Menu update
@@ -259,15 +265,22 @@ class ClaudeBar(rumps.App):
             sd_pct, "▓" * sd_f, "░" * (w - sd_f),
             f"  resets {fmt_date(sd['resets_at'])}"))
 
-        # Extra credits
+        # Extra credits — only shown when is_enabled
         if ex.get("is_enabled"):
             used  = ex.get("used_credits", 0)
             limit = ex.get("monthly_limit", 0)
             util  = ex.get("utilization", 0)
             set_menu_title(self.credits_row,
                 make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", "credits"))
+            if not self._credits_shown:
+                self.credits_hdr._menuitem.setHidden_(False)
+                self.credits_row._menuitem.setHidden_(False)
+                self._credits_shown = True
         else:
-            set_menu_title(self.credits_row, make_plain("  not enabled", "last_updated"))
+            if self._credits_shown:
+                self.credits_hdr._menuitem.setHidden_(True)
+                self.credits_row._menuitem.setHidden_(True)
+                self._credits_shown = False
 
         # Title bar
         self._last_fh_pct = fh_pct
