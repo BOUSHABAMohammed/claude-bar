@@ -8,7 +8,7 @@ Run: python claude_bar.py
 import argparse
 import datetime
 import pathlib
-import sys
+import threading
 from datetime import timezone
 
 import rumps
@@ -21,7 +21,7 @@ from color_utils import (
 
 REFRESH_INTERVAL = 300  # seconds
 COOKIE_NAMES = ("sessionKey", "__Secure-next-auth.session-token")
-BROWSERS = ("chrome", "safari", "firefox", "brave", "edge")
+BROWSERS = ("chrome", "safari", "firefox", "brave", "edge")  # edge support on macOS is limited in rookiepy
 PROGRESS_WIDTH = 20
 ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
 
@@ -57,8 +57,7 @@ def build_session(browser: str | None = None) -> requests.Session:
             s.cookies.set(name, val, domain="claude.ai")
             return s
     if browser:
-        print(f"[claude_bar] ERROR: No session cookie found in '{browser}'. Exiting.")
-        sys.exit(1)
+        raise RuntimeError(f"No session cookie found in '{browser}'.")
     raise RuntimeError(
         "No claude.ai session cookie found. "
         "Log in to Claude in Chrome or Safari first."
@@ -99,7 +98,9 @@ def fmt_reset(iso) -> str:
     """Format time remaining until reset as '2h 44m'."""
     if not isinstance(iso, str):
         return "unknown"
-    dt = datetime.datetime.fromisoformat(iso)
+    dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     total_secs = max(0, int((dt - datetime.datetime.now(timezone.utc)).total_seconds()))
     h, rem = divmod(total_secs, 3600)
     return f"{h}h {rem // 60:02d}m"
@@ -109,11 +110,11 @@ def fmt_date(iso) -> str:
     """Format reset date as 'Fri Mar 06'."""
     if not isinstance(iso, str):
         return "unknown"
-    return datetime.datetime.fromisoformat(iso).strftime("%a %b %d")
+    return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%a %b %d")
 
 
 def _progress_bar(pct: float, width: int = PROGRESS_WIDTH) -> tuple[str, str]:
-    filled = round(pct / 100 * width)
+    filled = min(round(pct / 100 * width), width)
     return "▓" * filled, "░" * (width - filled)
 
 
@@ -145,16 +146,18 @@ class ClaudeBar(rumps.App):
 
         self._session: requests.Session | None = None
         self._org_id: str | None = None
+        self._refreshing: bool = False
         self._show_summary: bool = SHOW_TITLE_SUMMARY
         self._icon_loaded: bool = False
         self._last_fh_pct: float | None = None
         self._last_sd_pct: float | None = None
-        self._credits_shown: bool = True
+        self._credits_shown: bool = False
 
         self._update_toggle_label()
         set_menu_title(self.five_h_hdr,  make_section_header("5-Hour Window"))
         set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
         set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
+        self._set_credits_visible(False)  # hidden until first refresh confirms is_enabled
 
         self._refresh(None)
         rumps.Timer(self._setup_icon, 0.5).start()
@@ -182,6 +185,7 @@ class ClaudeBar(rumps.App):
             self.title = f"{self._last_fh_pct:.0f}% · {self._last_sd_pct:.0f}%"
         elif self._icon_loaded:
             self.title = None  # icon-only
+        # else: no data yet and icon not loaded — leave "⚡ …" placeholder untouched
 
     def _update_toggle_label(self):
         mark = "✓" if self._show_summary else "  "
@@ -234,12 +238,20 @@ class ClaudeBar(rumps.App):
             print(f"[claude_bar] refresh error: {exc}")
 
     def _refresh(self, _):
+        if self._refreshing:
+            return
+        self._refreshing = True
+        threading.Thread(target=self._refresh_bg, daemon=True).start()
+
+    def _refresh_bg(self):
         try:
             self._ensure_session()
             data = fetch_usage(self._session, self._org_id)
             self._update_menu(data)
         except Exception as exc:
             self._handle_error(exc)
+        finally:
+            self._refreshing = False
 
     # ------------------------------------------------------------------
     # Menu update

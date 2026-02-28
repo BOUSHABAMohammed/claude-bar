@@ -37,12 +37,12 @@ def _attrs(color_key, bold=False, mono=False):
         NSFontAttributeName: _FONT_BOLD if bold else (_FONT_MONO if mono else _FONT_REG),
     }
 
-def _chunk(text, color_key, bold=False, mono=False):
+def _attr_str(text, color_key, bold=False, mono=False):
     return NSAttributedString.alloc().initWithString_attributes_(text, _attrs(color_key, bold, mono))
 
 def make_plain(text, color_key, bold=False):
     """Single-color NSAttributedString."""
-    return _chunk(text, color_key, bold=bold)
+    return _attr_str(text, color_key, bold=bold)
 
 def set_menu_title(menuitem, attr_string):
     """Apply attributed string to a rumps.MenuItem. Never assign .title afterwards."""
@@ -54,15 +54,15 @@ def pct_color_key(pct):
 def make_section_header(label):
     """◆ (teal) + bold white label."""
     r = NSMutableAttributedString.alloc().init()
-    r.appendAttributedString_(_chunk("◆ ", "bar_filled"))
-    r.appendAttributedString_(_chunk(label, "header", bold=True))
+    r.appendAttributedString_(_attr_str("◆ ", "bar_filled"))
+    r.appendAttributedString_(_attr_str(label, "header", bold=True))
     return r
 
 def make_progress_row(pct, filled, empty, suffix):
     """Colored progress row: percentage + ▓▓▓░░░ + suffix."""
     r = NSMutableAttributedString.alloc().init()
-    r.appendAttributedString_(_chunk(f"  {pct:.0f}%  ", pct_color_key(pct)))
-    r.appendAttributedString_(_chunk(filled, "bar_filled", mono=True))
-    r.appendAttributedString_(_chunk(empty,  "bar_empty",  mono=True))
-    r.appendAttributedString_(_chunk(suffix, "reset_time"))
+    r.appendAttributedString_(_attr_str(f"  {pct:.0f}%  ", pct_color_key(pct)))
+    r.appendAttributedString_(_attr_str(filled, "bar_filled", mono=True))
+    r.appendAttributedString_(_attr_str(empty,  "bar_empty",  mono=True))
+    r.appendAttributedString_(_attr_str(suffix, "reset_time"))
     return r
