@@ -7,8 +7,11 @@ Run: python claude_bar.py
 
 import argparse
 import datetime
+import json
 import pathlib
+import subprocess
 import threading
+import urllib.request
 from datetime import timezone
 
 import rumps
@@ -21,8 +24,12 @@ from color_utils import (
     set_menu_title,
 )
 
+VERSION = "1.0.1"  # bump this with each release
+GITHUB_REPO = "BOUSHABAMohammed/claude-bar"
+
 REFRESH_INTERVAL = 300  # seconds
 ICON_SETUP_DELAY_SECS = 0.5  # give the run loop time to start before loading the icon
+UPDATE_CHECK_DELAY_SECS = 5.0  # wait for run loop to settle before hitting GitHub
 COOKIE_NAMES = ("sessionKey", "__Secure-next-auth.session-token")
 BROWSERS = ("chrome", "safari", "firefox", "brave", "edge")  # edge support on macOS is limited in rookiepy
 ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
@@ -30,6 +37,32 @@ ICON_PATH = pathlib.Path(__file__).parent / "icons8-claude-ai-96.png"
 # Set to False to hide the percentage summary next to the menu bar icon.
 # Can also be toggled at runtime via the menu.
 SHOW_TITLE_SUMMARY = True
+
+
+# ---------------------------------------------------------------------------
+# Update check
+# ---------------------------------------------------------------------------
+
+def _parse_version(tag: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in tag.lstrip("v").split("."))
+
+
+def check_for_update() -> tuple[str, str] | None:
+    """Return (tag_name, html_url) if a newer release exists on GitHub, else None."""
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            headers={"User-Agent": "claude-bar"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        tag = data.get("tag_name", "")
+        html_url = data.get("html_url", "")
+        if tag and _parse_version(tag) > _parse_version(VERSION):
+            return tag, html_url
+    except Exception as exc:
+        print(f"[claude_bar] update check error: {type(exc).__name__}: {exc}")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +172,10 @@ class ClaudeBar(rumps.App):
         set_menu_title(self.seven_d_hdr, make_section_header("7-Day Window"))
         set_menu_title(self.credits_hdr, make_section_header("Extra Credits"))
         self._set_credits_visible(False)  # hidden until first refresh confirms is_enabled
+        self.update_item._menuitem.setHidden_(True)  # shown only when update is available
         self._refresh(None)
         rumps.Timer(self._setup_icon, ICON_SETUP_DELAY_SECS).start()
+        rumps.Timer(self._start_update_check, UPDATE_CHECK_DELAY_SECS).start()
 
     # ------------------------------------------------------------------
     # Initialization helpers
@@ -156,12 +191,14 @@ class ClaudeBar(rumps.App):
         self.refresh_btn = rumps.MenuItem("  ⟳ Refresh Now", callback=self.on_refresh)
         self.summary_toggle = rumps.MenuItem("", callback=self.on_toggle_summary)
         self.last_item = rumps.MenuItem("  Last updated: —")
+        self.update_item = rumps.MenuItem("  🆕 Update available", callback=self.on_open_update)
 
         self.menu = [
             self.five_h_hdr, self.five_h_row, None,
             self.seven_d_hdr, self.seven_d_row, None,
             self.credits_hdr, self.credits_row, None,
             self.summary_toggle, self.refresh_btn, self.last_item, None,
+            self.update_item,
         ]
 
     def _init_state(self):
@@ -174,6 +211,7 @@ class ClaudeBar(rumps.App):
         self._last_fh_pct: float | None = None
         self._last_sd_pct: float | None = None
         self._credits_shown: bool = False
+        self._update_url: str = f"https://github.com/{GITHUB_REPO}/releases"
 
     # ------------------------------------------------------------------
     # Icon setup
@@ -211,6 +249,9 @@ class ClaudeBar(rumps.App):
     def on_refresh(self, _):
         self._refresh(None)
 
+    def on_open_update(self, _):
+        subprocess.Popen(["open", self._update_url])
+
     def on_toggle_summary(self, _):
         self._show_summary = not self._show_summary
         self._update_toggle_label()
@@ -219,6 +260,25 @@ class ClaudeBar(rumps.App):
     @rumps.timer(REFRESH_INTERVAL)
     def _auto_refresh(self, _):
         self._refresh(None)
+
+    # ------------------------------------------------------------------
+    # Update check
+    # ------------------------------------------------------------------
+
+    def _start_update_check(self, timer):
+        timer.stop()
+        threading.Thread(target=self._check_update_bg, daemon=True).start()
+
+    def _check_update_bg(self):
+        result = check_for_update()
+        if result:
+            tag, url = result
+            self._update_url = url
+            callAfter(self._show_update_banner, tag)
+
+    def _show_update_banner(self, tag: str):
+        self.update_item.title = f"  🆕 Update available: {tag} — click to open"
+        self.update_item._menuitem.setHidden_(False)
 
     # ------------------------------------------------------------------
     # Session management
