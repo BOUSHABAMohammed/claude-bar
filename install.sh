@@ -111,7 +111,7 @@ echo ""
 AUTOSTART="n"
 # </dev/tty forces read to use the terminal even when the script is piped through bash
 read -r -p "Start claude-bar automatically at login? [y/N] " AUTOSTART </dev/tty || true
-if [[ "${AUTOSTART,,}" == "y" ]]; then
+if [[ "$AUTOSTART" == "y" || "$AUTOSTART" == "Y" ]]; then
     step "Installing LaunchAgent..."
     mkdir -p "$HOME/Library/LaunchAgents"
 
