@@ -14,6 +14,7 @@ A macOS menu bar app that shows your real-time [Claude.ai](https://claude.ai) us
 - [Privacy and Security](#privacy-and-security)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Manual installation](#manual-installation)
 - [Starting and stopping](#starting-and-stopping)
 - [Updating](#updating)
 - [Uninstall](#uninstall)
@@ -102,6 +103,19 @@ curl -fsSL https://raw.githubusercontent.com/BOUSHABAMohammed/claude-bar/main/in
 7. Optionally writes and loads a LaunchAgent so claude-bar starts at login
 
 Everything is self-contained in `~/.local/share/claude-bar/`. Nothing is written to system directories or `/usr/local`.
+
+---
+
+## Manual installation
+
+```bash
+git clone https://github.com/BOUSHABAMohammed/claude-bar.git
+cd claude-bar
+uv sync --frozen --no-dev
+.venv/bin/python claude_bar.py
+```
+
+> Don't have `uv`? Install it with `brew install uv`
 
 ---
 
