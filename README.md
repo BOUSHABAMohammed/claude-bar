@@ -2,9 +2,27 @@
 
 A macOS menu bar app that shows your real-time [Claude.ai](https://claude.ai) usage — no login required beyond your existing browser session.
 
-![claude-bar menu bar icon showing 3% · 19% usage](menubar.png)
+<table><tr>
+  <td><img src="menubar.png" alt="menu bar icon showing 3% · 19% usage"></td>
+  <td><img src="menubar_expanded.png" alt="expanded menu" width="320"></td>
+</tr></table>
 
-![claude-bar expanded menu showing 5-hour window at 3%, 7-day window at 19%, and extra credits](menubar_expanded.png)
+## Table of Contents
+
+- [What it shows](#what-it-shows)
+- [Why this exists](#why-this-exists)
+- [Privacy and Security](#privacy-and-security)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Starting and stopping](#starting-and-stopping)
+- [Updating](#updating)
+- [Uninstall](#uninstall)
+- [Troubleshooting](#troubleshooting)
+- [Advanced](#advanced)
+- [How it works](#how-it-works)
+- [License](#license)
+
+---
 
 ## What it shows
 
