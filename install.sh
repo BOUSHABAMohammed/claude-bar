@@ -31,12 +31,15 @@ if [[ "$VERSION" == "latest" ]]; then
     VERSION=$(
         curl -fsSL \
             "https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest" \
+        2>/dev/null \
         | grep '"tag_name"' \
         | sed -E 's/.*"([^"]+)".*/\1/'
-    )
+    ) || true
     [[ -z "$VERSION" ]] && die \
-        "Could not resolve the latest version.\n" \
-        "Check that a release exists at: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases"
+        "No releases found for ${GITHUB_OWNER}/${GITHUB_REPO}.\n\n" \
+        "Create one first:\n" \
+        "   git tag v0.1.0 && git push origin v0.1.0\n" \
+        "Then publish the release at: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/new"
     echo "   Latest version: ${VERSION}"
 fi
 
