@@ -2,7 +2,9 @@
 
 A macOS menu bar app that shows your real-time [Claude.ai](https://claude.ai) usage — no login required beyond your existing browser session.
 
-<!-- Replace this line with a screenshot or GIF: ![claude-bar screenshot](docs/screenshot.png) -->
+![claude-bar menu bar icon showing 3% · 19% usage](menubar.png)
+
+![claude-bar expanded menu showing 5-hour window at 3%, 7-day window at 19%, and extra credits](menubar_expanded.png)
 
 ## What it shows
 
@@ -12,6 +14,16 @@ A macOS menu bar app that shows your real-time [Claude.ai](https://claude.ai) us
 - **Percentage summary** in the menu bar title (optional, togglable from the menu)
 
 Data refreshes automatically every 5 minutes, or on demand via the menu.
+
+---
+
+## Why this exists
+
+I'm on Claude Pro and use it heavily while working on side projects. Keeping track of the 5-hour and 7-day usage limits meant constantly switching to [claude.ai/settings/usage](https://claude.ai/settings/usage), breaking my flow every time I wanted to know how much headroom I had left.
+
+I tried [CodexBar](https://codexbar.app/) but it was reporting my limits as fully consumed when they weren't, which made it useless for my workflow.
+
+So I built claude-bar: a small menu bar icon that shows the real numbers straight from the Claude API, always visible, always accurate, zero clicks needed.
 
 ---
 
@@ -72,6 +84,36 @@ curl -fsSL https://raw.githubusercontent.com/BOUSHABAMohammed/claude-bar/main/in
 7. Optionally writes and loads a LaunchAgent so claude-bar starts at login
 
 Everything is self-contained in `~/.local/share/claude-bar/`. Nothing is written to system directories or `/usr/local`.
+
+---
+
+## Starting and stopping
+
+Quit claude-bar at any time from its menu. Because the LaunchAgent is configured to restart only on crash (not on a normal quit), it stays quit until you start it again.
+
+**Restart from the terminal:**
+
+```bash
+~/.local/share/claude-bar/run.sh
+```
+
+**Restart via launchd (if you installed the LaunchAgent):**
+
+```bash
+launchctl start com.user.claude-bar
+```
+
+**Prevent it from starting at login (without uninstalling):**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.user.claude-bar.plist
+```
+
+**Re-enable start at login:**
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.user.claude-bar.plist
+```
 
 ---
 
