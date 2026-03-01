@@ -14,6 +14,7 @@ from datetime import timezone
 import rumps
 import rookiepy
 from curl_cffi import requests
+from PyObjCTools.AppHelper import callAfter
 from color_utils import (
     ColorKey,
     make_plain, make_section_header, make_progress_row,
@@ -115,11 +116,12 @@ def fmt_reset(iso) -> str:
 
 
 def fmt_date(iso) -> str:
-    """Format reset date as 'Fri Mar 06'."""
+    """Format reset date as 'Fri Mar 06 06:00' (Local Time)."""
     dt = _parse_iso(iso)
     if dt is None:
         return "unknown"
-    return dt.strftime("%a %b %d")
+    local_dt = dt.astimezone()
+    return local_dt.strftime("%a %b %d %H:%M %p")
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +261,9 @@ class ClaudeBar(rumps.App):
         try:
             self._ensure_session()
             data = fetch_usage(self._session, self._org_id)
-            self._update_menu(data)
+            callAfter(self._update_menu, data)
         except Exception as exc:
-            self._handle_error(exc)
+            callAfter(self._handle_error, exc)
         finally:
             with self._refresh_lock:
                 self._refreshing = False
@@ -306,7 +308,7 @@ class ClaudeBar(rumps.App):
         sd_resets = seven_day.get("resets_at")
 
         self._render_window(self.five_h_row, fh_util,
-                            f"  resets in {fmt_reset(fh_resets)}")
+                            "   Starts when a message is sent" if fmt_reset(fh_resets) == "unknown" else f"  resets in {fmt_reset(fh_resets)}" )
         self._render_window(self.seven_d_row, sd_util,
                             f"  resets {fmt_date(sd_resets)}")
         self._render_credits(data.get("extra_usage") or {})

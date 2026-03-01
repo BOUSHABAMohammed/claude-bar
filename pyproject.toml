@@ -1,10 +1,24 @@
 [project]
-name = "claude-usage"
+name = "claude-bar"
 version = "0.1.0"
-description = "Add your description here"
+description = "macOS menu bar app showing your Claude.ai usage (5h/7d utilization and extra credits)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "you@example.com" },
+]
+keywords = ["claude", "anthropic", "usage", "menu-bar", "macos"]
 requires-python = ">=3.12"
 dependencies = [
-    "curl-cffi>=0.14.0",
-    "rookiepy>=0.5.6",
-    "rumps>=0.4.0",
+    "curl-cffi==0.14.0",
+    "pyobjc-framework-Cocoa==12.1",
+    "rookiepy==0.5.6",
+    "rumps==0.4.0",
 ]
+
+[project.scripts]
+claude-bar = "claude_bar:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

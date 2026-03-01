@@ -69,20 +69,22 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-usage"
+name = "claude-bar"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
+    { name = "pyobjc-framework-cocoa" },
     { name = "rookiepy" },
     { name = "rumps" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "curl-cffi", specifier = ">=0.14.0" },
-    { name = "rookiepy", specifier = ">=0.5.6" },
-    { name = "rumps", specifier = ">=0.4.0" },
+    { name = "curl-cffi", specifier = "==0.14.0" },
+    { name = "pyobjc-framework-cocoa", specifier = "==12.1" },
+    { name = "rookiepy", specifier = "==0.5.6" },
+    { name = "rumps", specifier = "==0.4.0" },
 ]
 
 [[package]]
