@@ -36,10 +36,7 @@ if [[ "$VERSION" == "latest" ]]; then
         | sed -E 's/.*"([^"]+)".*/\1/'
     ) || true
     [[ -z "$VERSION" ]] && die \
-        "No releases found for ${GITHUB_OWNER}/${GITHUB_REPO}.\n\n" \
-        "Create one first:\n" \
-        "   git tag v0.1.0 && git push origin v0.1.0\n" \
-        "Then publish the release at: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/new"
+        "No releases found for ${GITHUB_OWNER}/${GITHUB_REPO}.\n\n"   
     echo "   Latest version: ${VERSION}"
 fi
 
@@ -111,7 +108,9 @@ chmod +x "$INSTALL_DIR/run.sh"
 # 9. Optional: install LaunchAgent (start at login)
 # ============================================================
 echo ""
-read -r -p "Start claude-bar automatically at login? [y/N] " AUTOSTART
+AUTOSTART="n"
+# </dev/tty forces read to use the terminal even when the script is piped through bash
+read -r -p "Start claude-bar automatically at login? [y/N] " AUTOSTART </dev/tty || true
 if [[ "${AUTOSTART,,}" == "y" ]]; then
     step "Installing LaunchAgent..."
     mkdir -p "$HOME/Library/LaunchAgents"
