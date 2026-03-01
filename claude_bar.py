@@ -282,9 +282,9 @@ class ClaudeBar(rumps.App):
 
     def _render_credits(self, extra_usage: dict):
         if extra_usage.get("is_enabled"):
-            used = extra_usage.get("used_credits", 0)
-            limit = extra_usage.get("monthly_limit", 0)
-            util = extra_usage.get("utilization", 0)
+            used = extra_usage.get("used_credits") or 0
+            limit = extra_usage.get("monthly_limit") or 0
+            util = extra_usage.get("utilization") or 0
             set_menu_title(self.credits_row,
                 make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", ColorKey.CREDITS))
             if not self._credits_shown:
@@ -293,32 +293,43 @@ class ClaudeBar(rumps.App):
             self._set_credits_visible(False)
 
     def _update_menu(self, data: dict):
-        five_hour = data.get("five_hour")
-        seven_day = data.get("seven_day")
+        try:
+            five_hour = data.get("five_hour")
+            seven_day = data.get("seven_day")
 
-        if five_hour is None or seven_day is None:
-            print(f"[claude_bar] unexpected API response keys: {list(data.keys())}")
+            if five_hour is None or seven_day is None:
+                print(f"[claude_bar] unexpected API response keys: {list(data.keys())}")
+                set_menu_title(self.last_item,
+                    make_plain("  Error: unexpected API response shape", ColorKey.ERROR))
+                return
+
+            fh_util = five_hour.get("utilization", 0.0)
+            fh_resets = five_hour.get("resets_at")
+            sd_util = seven_day.get("utilization", 0.0)
+            sd_resets = seven_day.get("resets_at")
+
+            self._render_window(self.five_h_row, fh_util,
+                                "   Starts when a message is sent" if fmt_reset(fh_resets) == "unknown" else f"  resets in {fmt_reset(fh_resets)}")
+            self._render_window(self.seven_d_row, sd_util,
+                                f"  resets {fmt_date(sd_resets)}")
+
+            # Update title and timestamp FIRST — before credits which may fail
+            self._last_fh_pct = fh_util
+            self._last_sd_pct = sd_util
+            self._apply_title()
             set_menu_title(self.last_item,
-                make_plain("  Error: unexpected API response shape", ColorKey.ERROR))
-            return
+                make_plain(f"  Last updated {datetime.datetime.now():%H:%M:%S}", ColorKey.LAST_UPDATED))
 
-        fh_util = five_hour.get("utilization", 0.0)
-        fh_resets = five_hour.get("resets_at")
-        sd_util = seven_day.get("utilization", 0.0)
-        sd_resets = seven_day.get("resets_at")
+            # Credits section isolated — crash here won't affect title/timestamp
+            try:
+                self._render_credits(data.get("extra_usage") or {})
+            except Exception as exc:
+                print(f"[claude_bar] credits render error: {type(exc).__name__}: {exc}")
 
-        self._render_window(self.five_h_row, fh_util,
-                            "   Starts when a message is sent" if fmt_reset(fh_resets) == "unknown" else f"  resets in {fmt_reset(fh_resets)}" )
-        self._render_window(self.seven_d_row, sd_util,
-                            f"  resets {fmt_date(sd_resets)}")
-        self._render_credits(data.get("extra_usage") or {})
-
-        self._last_fh_pct = fh_util
-        self._last_sd_pct = sd_util
-        self._apply_title()
-
-        set_menu_title(self.last_item,
-            make_plain(f"  Last updated {datetime.datetime.now():%H:%M:%S}", ColorKey.LAST_UPDATED))
+        except Exception as exc:
+            print(f"[claude_bar] _update_menu error: {type(exc).__name__}: {exc}")
+            set_menu_title(self.last_item,
+                make_plain(f"  Error: {type(exc).__name__}", ColorKey.ERROR))
 
 
 # ---------------------------------------------------------------------------
