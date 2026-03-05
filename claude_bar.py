@@ -24,7 +24,7 @@ from color_utils import (
     set_menu_title,
 )
 
-VERSION = "0.1.3"  # bump this with each release
+VERSION = "1.0.2"  # bump this with each release
 GITHUB_REPO = "BOUSHABAMohammed/claude-bar"
 
 REFRESH_INTERVAL = 300  # seconds
@@ -192,6 +192,7 @@ class ClaudeBar(rumps.App):
         self.summary_toggle = rumps.MenuItem("", callback=self.on_toggle_summary)
         self.last_item = rumps.MenuItem("  Last updated: —")
         self.update_item = rumps.MenuItem("  🆕 Update available", callback=self.on_open_update)
+        self.version_item = rumps.MenuItem(f"  v{VERSION}")
 
         self.menu = [
             self.five_h_hdr, self.five_h_row, None,
@@ -199,6 +200,7 @@ class ClaudeBar(rumps.App):
             self.credits_hdr, self.credits_row, None,
             self.summary_toggle, self.refresh_btn, self.last_item, None,
             self.update_item,
+            self.version_item,
         ]
 
     def _init_state(self):
