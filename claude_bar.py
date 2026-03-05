@@ -24,7 +24,7 @@ from color_utils import (
     set_menu_title,
 )
 
-VERSION = "1.0.2"  # bump this with each release
+VERSION = "0.1.3"  # bump this with each release
 GITHUB_REPO = "BOUSHABAMohammed/claude-bar"
 
 REFRESH_INTERVAL = 300  # seconds
