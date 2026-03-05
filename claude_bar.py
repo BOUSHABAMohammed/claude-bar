@@ -24,7 +24,7 @@ from color_utils import (
     set_menu_title,
 )
 
-VERSION = "1.0.1"  # bump this with each release
+VERSION = "1.0.2"  # bump this with each release
 GITHUB_REPO = "BOUSHABAMohammed/claude-bar"
 
 REFRESH_INTERVAL = 300  # seconds
@@ -342,8 +342,8 @@ class ClaudeBar(rumps.App):
 
     def _render_credits(self, extra_usage: dict):
         if extra_usage.get("is_enabled"):
-            used = extra_usage.get("used_credits") or 0
-            limit = extra_usage.get("monthly_limit") or 0
+            used = (extra_usage.get("used_credits") or 0) / 100
+            limit = (extra_usage.get("monthly_limit") or 0) / 100
             util = extra_usage.get("utilization") or 0
             set_menu_title(self.credits_row,
                 make_plain(f"  ${used:.2f} used of ${limit:,.0f}  ({util:.2f}%)", ColorKey.CREDITS))
